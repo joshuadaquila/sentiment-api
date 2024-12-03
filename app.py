@@ -1,6 +1,8 @@
 from flask import Flask, request, jsonify
 import joblib
 import re
+import nltk
+nltk.data.path.append('./nltk_data')
 from nltk.corpus import stopwords
 
 app = Flask(__name__)
