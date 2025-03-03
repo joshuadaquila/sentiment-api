@@ -245,100 +245,14 @@ def get_lda_explanation(lda_model, count_vectorizer, text):
 
     return lda_explanation
 
-# @app.route('/predictEvent', methods=['POST'])
-# def predictEvent():
-#     data = request.json
-#     print("Received data:", data)  # Debugging: print the received data
-#
-#     # Validate the structure of the input data
-#     if 'texts' not in data:
-#         return jsonify({"error": "'texts' field is missing in the input data"}), 400
-#
-#     texts_with_eventId = data['texts']
-#
-#     # Check if texts_with_eventId is a list of dictionaries
-#     if not isinstance(texts_with_eventId, list) or not all(isinstance(text, dict) for text in texts_with_eventId):
-#         return jsonify({"error": "'texts' should be a list of dictionaries"}), 400
-#
-#     # Check if 'content' key exists in each text dictionary
-#     for text in texts_with_eventId:
-#         if 'content' not in text or not isinstance(text['content'], str):
-#             return jsonify({"error": "'content' key missing or invalid in one of the text entries"}), 400
-#
-#     if not texts_with_eventId or all(text['content'].strip() == '' for text in texts_with_eventId):
-#         return jsonify({"error": "No feedback provided or all texts are empty."}), 400
-#
-#     try:
-#         # Preprocess the texts
-#         texts_processed = [preprocess_text(text['content']) for text in texts_with_eventId]
-#         print(f"Processed texts: {texts_processed}")  # Check processed texts
-#
-#         # Vectorize the texts using TF-IDF for sentiment prediction
-#         texts_vectorized_tfidf = tfidf_vectorizer.transform(texts_processed)
-#         print(f"Vectorized texts (TF-IDF): {texts_vectorized_tfidf.shape}")  # Check vectorized shape
-#
-#         # Sentiment prediction using logistic regression model
-#         sentiment_predictions = sentiment_model.predict(texts_vectorized_tfidf)
-#         print(f"Sentiment predictions: {sentiment_predictions}")
-#
-#         # Map predictions to sentiment labels
-#         sentiments = [sentiment_mapping.get(int(pred), 'unknown') for pred in sentiment_predictions]
-#
-#         # Get explanations for the sentiment predictions from LR model
-#         sentiment_explanations = []
-#         for i, sentiment in enumerate(sentiments):
-#             explanation = get_sentiment_explanation(
-#                 texts_with_eventId[i]['content'],  # The text content
-#                 sentiment,  # Sentiment prediction (positive, negative, neutral)
-#                 tfidf_vectorizer,  # The TF-IDF vectorizer used for the model
-#                 sentiment_model  # The Logistic Regression model
-#             )
-#             print(f"Explanation for text {i} (Event ID: {texts_with_eventId[i]['eventId']}): {explanation}")  # Debugging: print explanations
-#             sentiment_explanations.append({
-#                 'eventId': texts_with_eventId[i]['eventId'],  # Include eventId with explanation
-#                 'explanation': explanation  # The explanation from the LR model
-#             })
-#
-#         # Get the most mentioned words from the texts for LR (general important words)
-#         top_words_lr = get_most_mentioned_words_for_sentiment(texts_processed, tfidf_vectorizer)
-#         print(f"Top words for LR: {top_words_lr}")
-#
-#         # Get the most mentioned words related to the sentiment (adjectives)
-#         sentiment_related_words = {}
-#         for sentiment in sentiment_mapping.values():
-#             sentiment_related_words[sentiment] = get_sentiment_related_words_for_sentiment(texts_processed, sentiment)
-#         print(f"Sentiment related words: {sentiment_related_words}")
-#
-#         # Vectorize the texts using the CountVectorizer for LDA topic prediction
-#         texts_vectorized_count = count_vectorizer.transform(texts_processed)
-#
-#         # Linear Discriminant Analysis (LDA) topic prediction
-#         lda_predictions = lda_model.predict(texts_vectorized_count.toarray())  # Use predict method for LDA
-#         print(f"LDA Predictions: {lda_predictions}")
-#
-#         # Get LDA explanations for each text
-#         lda_explanations = [
-#             {
-#                 'eventId': texts_with_eventId[i]['eventId'],  # Include eventId with LDA explanation
-#                 'lda_explanation': get_lda_explanation(lda_model, count_vectorizer, text)
-#             }
-#             for i, text in enumerate(texts_processed)
-#         ]
-#
-#         # Prepare the response with the model results
-#         response = {
-#             'lda': lda_predictions.tolist(),  # Just the raw topic numbers from LDA
-#             'lda_explanations': lda_explanations,  # LDA explanations for each text
-#             'lr': sentiments,  # Sentiment predictions from LR
-#             'topwords': top_words_lr,  # Top mentioned words for LR sentiment prediction
-#             'sentiment_related_words': sentiment_related_words,  # Adjectives related to the predicted sentiment
-#             'sentiment_explanations': sentiment_explanations  # Explanation of sentiment predictions from LR
-#         }
-#
-#         return jsonify(response)
-#
-#     except Exception as e:
-#         return jsonify({"error": f"Error in prediction: {e}"}), 500
+@app.route('/healthz', methods=['GET'])
+def health_check():
+    try:
+        # Simple response to confirm the server is running
+        return jsonify({"status": "healthy", "message": "Service is running."}), 200
+    except Exception as e:
+        # In case of an error, respond with an internal server error status
+        return jsonify({"status": "unhealthy", "message": str(e)}), 500
 
 # Update the predict function to include LDA explanations
 @app.route('/predict', methods=['POST'])
