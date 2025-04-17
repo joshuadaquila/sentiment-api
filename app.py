@@ -10,8 +10,8 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 # Download necessary NLTK corpora
 try:
     nltk.download('stopwords')
-    nltk.download('punkt')
-    nltk.download('averaged_perceptron_tagger')
+    nltk.download('punkt_tab')
+    nltk.download('averaged_perceptron_tagger_eng')
 except Exception as e:
     print(f"Error downloading NLTK corpora: {e}")
 
@@ -48,32 +48,143 @@ def extract_adjectives(text):
     adjectives = [word for word, tag in tagged_words if tag in ['JJ', 'JJR', 'JJS']]  # Adjective tags
     return adjectives
 
-# Function to explain sentiment prediction based on the Logistic Regression model
+
+# Function to explain sentiment predictions
 def get_sentiment_explanation(text, sentiment_prediction, vectorizer, model):
+    # Vectorize the text input
     text_vectorized = vectorizer.transform([text])
+
+    # Get feature names
     feature_names = vectorizer.get_feature_names_out()
+
+    # Get the coefficients from the logistic regression model
     coefficients = model.coef_.flatten()
+
+    # Number of top words to extract
     top_n = 5
 
+    # Determine top words based on sentiment
     if sentiment_prediction == 'positive':
-        top_words_indices = coefficients.argsort()[-top_n:][::-1]
+        top_words_indices = np.argsort(coefficients)[-top_n:][::-1]
     elif sentiment_prediction == 'negative':
-        top_words_indices = coefficients.argsort()[:top_n]
+        top_words_indices = np.argsort(coefficients)[:top_n]
     else:
-        top_words_indices = coefficients.argsort()[top_n // 2:top_n // 2 + 5]
+        top_words_indices = np.argsort(coefficients)[len(coefficients) // 2:len(coefficients) // 2 + top_n]
 
+    # Ensure indices are within bounds
     top_words_indices = [i for i in top_words_indices if i < len(feature_names)]
+
+    # Extract corresponding words and their coefficients
     top_words = [feature_names[i] for i in top_words_indices]
+    top_coefficients = coefficients[top_words_indices]
+
+    # Extract adjectives from the text
     adjectives = extract_adjectives(text)
 
+    # Prepare the explanation dictionary
     explanation = {
         "sentiment": sentiment_prediction,
         "top_words": top_words,
-        "adjectives": adjectives,
-        "coefficients": coefficients[top_words_indices].tolist()
+        "coefficients": top_coefficients.tolist(),
+        "adjectives": adjectives
     }
 
     return explanation
+
+@app.route('/predictEvent', methods=['POST'])
+def predictEvent():
+    data = request.json
+    print("Received data:", data)  # Debugging: print the received data
+
+    # Validate the structure of the input data
+    if 'texts' not in data:
+        return jsonify({"error": "'texts' field is missing in the input data"}), 400
+
+    texts_with_eventId = data['texts']
+
+    # Check if texts_with_eventId is a list of dictionaries
+    if not isinstance(texts_with_eventId, list) or not all(isinstance(text, dict) for text in texts_with_eventId):
+        return jsonify({"error": "'texts' should be a list of dictionaries"}), 400
+
+    # Check if 'content' key exists in each text dictionary
+    for text in texts_with_eventId:
+        if 'content' not in text or not isinstance(text['content'], str):
+            return jsonify({"error": "'content' key missing or invalid in one of the text entries"}), 400
+
+    if not texts_with_eventId or all(text['content'].strip() == '' for text in texts_with_eventId):
+        return jsonify({"error": "No feedback provided or all texts are empty."}), 400
+
+    try:
+        # Preprocess the texts
+        texts_processed = [preprocess_text(text['content']) for text in texts_with_eventId]
+        print(f"Processed texts: {texts_processed}")  # Check processed texts
+
+        # Vectorize the texts using TF-IDF for sentiment prediction
+        texts_vectorized_tfidf = tfidf_vectorizer.transform(texts_processed)
+        print(f"Vectorized texts (TF-IDF): {texts_vectorized_tfidf.shape}")  # Check vectorized shape
+
+        # Sentiment prediction using logistic regression model
+        sentiment_predictions = sentiment_model.predict(texts_vectorized_tfidf)
+        print(f"Sentiment predictions: {sentiment_predictions}")
+
+        # Map predictions to sentiment labels
+        sentiments = [sentiment_mapping.get(int(pred), 'unknown') for pred in sentiment_predictions]
+
+        # Get explanations for the sentiment predictions from LR model
+        sentiment_explanations = []
+        for i, sentiment in enumerate(sentiments):
+            explanation = get_sentiment_explanation(
+                texts_with_eventId[i]['content'],  # The text content
+                sentiment,  # Sentiment prediction (positive, negative, neutral)
+                tfidf_vectorizer,  # The TF-IDF vectorizer used for the model
+                sentiment_model  # The Logistic Regression model
+            )
+            print(f"Explanation for text {i} (Event ID: {texts_with_eventId[i]['eventId']}): {explanation}")  # Debugging: print explanations
+            sentiment_explanations.append({
+                'eventId': texts_with_eventId[i]['eventId'],  # Include event Id with explanation
+                'explanation': explanation  # The explanation from the LR model
+            })
+
+        # Get the most mentioned words from the texts for LR (general important words)
+        top_words_lr = get_most_mentioned_words_for_sentiment(texts_processed, tfidf_vectorizer)
+        print(f"Top words for LR: {top_words_lr}")
+
+        # Get the most mentioned words related to the sentiment (adjectives)
+        sentiment_related_words = {}
+        for sentiment in sentiment_mapping.values():
+            sentiment_related_words[sentiment] = get_sentiment_related_words_for_sentiment(texts_processed, sentiment)
+        print(f"Sentiment related words: {sentiment_related_words}")
+
+        # Vectorize the texts using the CountVectorizer for LDA topic prediction
+        texts_vectorized_count = count_vectorizer.transform(texts_processed)
+
+        # Linear Discriminant Analysis (LDA) topic prediction
+        lda_predictions = lda_model.predict(texts_vectorized_count.toarray())  # Use predict method for LDA
+        print(f"LDA Predictions: {lda_predictions}")
+
+        # Get LDA explanations for each text
+        lda_explanations = [
+            {
+                'eventId': texts_with_eventId[i]['eventId'],  # Include eventId with LDA explanation
+                'lda_explanation': get_lda_explanation(lda_model, count_vectorizer, text)
+            }
+            for i, text in enumerate(texts_processed)
+        ]
+
+        # Prepare the response with the model results
+        response = {
+            'lda': lda_predictions.tolist(),  # Just the raw topic numbers from LDA
+            'lda_explanations': lda_explanations,  # LDA explanations for each text
+            'lr': sentiments,  # Sentiment predictions from LR
+            'topwords': top_words_lr,  # Top mentioned words for LR sentiment prediction
+            'sentiment_related_words': sentiment_related_words,  # Adjectives related to the predicted sentiment
+            'sentiment_explanations': sentiment_explanations  # Explanation of sentiment predictions from LR
+        }
+
+        return jsonify(response)
+
+    except Exception as e:
+        return jsonify({"error": f"Error in prediction: {e}"}), 500
 
 # Function to get the most mentioned words for sentiment
 def get_most_mentioned_words_for_sentiment(texts, vectorizer, top_n=10):
@@ -109,16 +220,22 @@ def get_lda_explanation(lda_model, count_vectorizer, text):
     # Get the predicted class
     predicted_class = lda_model.predict(text_vectorized)[0]
 
-    # Get the feature names (words)
-    feature_names = count_vectorizer.get_feature_names_out()
+    # Get feature names (words)
+    words = count_vectorizer.get_feature_names_out()
 
-    # Get the coefficients for the predicted class
-    class_coefficients = lda_model.coef_[predicted_class]
+    # Get coefficients for the predicted class
+    coefficients = lda_model.coef_[predicted_class]
 
-    # Get the top words for the predicted class (using coefficients from the LDA model)
-    top_indices = class_coefficients.argsort()[-5:][::-1]  # Get top 5 words
-    top_words = [feature_names[i] for i in top_indices]
-    top_coefficients = class_coefficients[top_indices].tolist()  # Get the corresponding coefficients
+    # Convert the vectorized text to an array
+    feedback_vector = text_vectorized.toarray()[0]
+
+    # Identify words in the feedback and their corresponding contributions
+    word_contributions = zip(words, feedback_vector * coefficients)
+    sorted_word_contributions = sorted(word_contributions, key=lambda x: x[1], reverse=True)
+
+    # Extract the top 5 contributing words
+    top_words = [word for word, _ in sorted_word_contributions[:5]]
+    top_coefficients = [contrib for _, contrib in sorted_word_contributions[:5]]
 
     lda_explanation = {
         "predicted_class": int(predicted_class),  # Convert to standard Python int
@@ -127,6 +244,15 @@ def get_lda_explanation(lda_model, count_vectorizer, text):
     }
 
     return lda_explanation
+
+@app.route('/healthz', methods=['GET'])
+def health_check():
+    try:
+        # Simple response to confirm the server is running
+        return jsonify({"status": "healthy", "message": "Service is running."}), 200
+    except Exception as e:
+        # In case of an error, respond with an internal server error status
+        return jsonify({"status": "unhealthy", "message": str(e)}), 500
 
 # Update the predict function to include LDA explanations
 @app.route('/predict', methods=['POST'])
@@ -195,6 +321,10 @@ def predict():
 
     except Exception as e:
         return jsonify({"error": f"Error in prediction: {e}"}), 500
+
+
+
+
 
 if __name__ == '__main__':
     app.run(debug=True)
